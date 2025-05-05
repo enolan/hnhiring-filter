@@ -1,0 +1,10 @@
+[project]
+name = "hnhiring-filter"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11.11"
+dependencies = [
+    "anthropic>=0.50.0",
+    "tqdm>=4.67.1",
+]
