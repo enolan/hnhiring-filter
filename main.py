@@ -52,6 +52,9 @@ def main():
     parser = argparse.ArgumentParser(description="Filter HN hiring posts using Claude")
     parser.add_argument("jsonl_file", help="Path to the JSONL file containing HN job posts")
     parser.add_argument("--output", "-o", help="Path to output file for matching posts", default="matching_posts.jsonl")
+    parser.add_argument(
+        "--workers", "-w", type=int, default=4, help="Number of parallel workers"
+    )
     args = parser.parse_args()
     
     if not os.path.exists(args.jsonl_file):
@@ -66,32 +69,56 @@ def main():
     client = Anthropic(api_key=api_key)
     matches = 0
     processed = 0
-    
-    # Count total lines for the progress bar
-    total_lines = sum(1 for _ in open(args.jsonl_file, 'r'))
-    
-    with open(args.jsonl_file, 'r') as f, open(args.output, 'w') as outfile:
-        for line in tqdm(f, total=total_lines, desc="Processing posts", unit="post"):
+
+    # Load all posts from the file
+    posts = []
+    with open(args.jsonl_file, "r") as f:
+        for line in f:
             try:
                 post = json.loads(line.strip())
-                response = process_post(client, post)
-                processed += 1
-                
-                if "MATCHES" in response:
-                    matches += 1
-                    # Print more details for matching posts
-                    print(f"\nMatching Post {post['id']}:")
-                    print(f"User: {post.get('user', 'Unknown')}")
-                    print(f"Text: {post.get('text', '')[:200]}...\n")
-                    
-                    # Write matching post to output file
-                    json.dump(post, outfile)
-                    outfile.write('\n')
+                posts.append(post)
             except json.JSONDecodeError:
                 print(f"Error: Invalid JSON line: {line[:50]}...", file=sys.stderr)
-            except Exception as e:
-                print(f"Error processing line: {e}", file=sys.stderr)
-    
+
+    total_posts = len(posts)
+    print(f"Loaded {total_posts} posts. Processing with {args.workers} workers...")
+
+    with open(args.output, "w") as outfile:
+        # Process posts in parallel
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=args.workers
+        ) as executor:
+            # Submit all tasks
+            future_to_post = {
+                executor.submit(process_post, client, post): post for post in posts
+            }
+
+            # Process results as they complete
+            for future in tqdm(
+                concurrent.futures.as_completed(future_to_post),
+                total=total_posts,
+                desc="Processing posts",
+                unit="post",
+            ):
+                try:
+                    post, response = future.result()
+                    processed += 1
+
+                    if "MATCHES" in response:
+                        matches += 1
+                        # Print more details for matching posts
+                        print(f"\nMatching Post {post.get('id', 'Unknown')}:")
+                        print(f"User: {post.get('user', 'Unknown')}")
+                        print(f"Text: {post.get('text', '')[:200]}...\n")
+
+                        # Write matching post to output file
+                        json.dump(post, outfile)
+                        outfile.write("\n")
+                        # Flush to ensure the match is written immediately
+                        outfile.flush()
+                except Exception as e:
+                    print(f"Error processing post: {e}", file=sys.stderr)
+
     print(f"\nSummary: Found {matches} matching posts out of {processed} processed")
     print(f"Matching posts saved to {args.output}")
 
