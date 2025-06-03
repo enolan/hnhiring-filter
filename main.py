@@ -1,8 +1,11 @@
 from textwrap import dedent
+import anthropic
 import argparse
 import json
 import sys
 import os
+import random
+import time
 from anthropic import Anthropic
 from tqdm import tqdm
 import concurrent.futures
@@ -31,24 +34,48 @@ Include no other text in your response. Here's the job post:
 def process_post(client, post):
     post_json = json.dumps(post)
 
-    response = client.messages.create(
-        model="claude-3-7-sonnet-20250219",
-        max_tokens=2048,
-        system="You are a helpful assistant.",
-        messages=[{"role": "user", "content": prompt.format(post_json=post_json)}],
-        thinking={"type": "enabled", "budget_tokens": 1024},
-    )
+    max_retries = 5
+    base_delay = 1  # Start with 1 second
+    max_delay = 60  # Cap at 60 seconds
 
-    # Access the final answer (non-thinking content)
-    print("Blocks:")
-    for block in response.content:
-        print(block)
-    print(f"Usage: {response.usage.model_dump_json()}")
-    final_block = response.content[-1]
-    assert final_block.type == "text"
-    response = final_block.text
-    # print(f"Post {post['id']}: {response}")
-    return post, response
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.messages.create(
+                model="claude-3-7-sonnet-20250219",
+                max_tokens=2048,
+                system="You are a helpful assistant.",
+                messages=[
+                    {"role": "user", "content": prompt.format(post_json=post_json)}
+                ],
+                thinking={"type": "enabled", "budget_tokens": 1024},
+            )
+
+            # Access the final answer (non-thinking content)
+            print("Blocks:")
+            for block in response.content:
+                print(block)
+            print(f"Usage: {response.usage.model_dump_json()}")
+            final_block = response.content[-1]
+            assert final_block.type == "text"
+            response = final_block.text
+            # print(f"Post {post['id']}: {response}")
+            return post, response
+
+        except anthropic.RateLimitError as e:
+            if attempt < max_retries:
+                # Calculate delay with exponential backoff and jitter
+                delay = min(base_delay * (2**attempt), max_delay)
+                jitter = random.uniform(0, delay * 0.1)  # Add up to 10% jitter
+                total_delay = delay + jitter
+
+                print(
+                    f"Rate limit hit for post {post.get('id', 'Unknown')}, retrying in {total_delay:.2f}s (attempt {attempt + 1}/{max_retries})"
+                )
+                time.sleep(total_delay)
+                continue
+            else:
+                # Re-raise the exception if we've exhausted retries
+                raise e
 
 
 def main():
