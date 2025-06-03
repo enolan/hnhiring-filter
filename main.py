@@ -5,8 +5,10 @@ import sys
 import os
 from anthropic import Anthropic
 from tqdm import tqdm
+import concurrent.futures
 
-prompt = dedent("""
+prompt = dedent(
+    """
 I'm looking for a job. Below, I'll give you a json object representing a post from the latest Hacker
 news hiring thread. Read the post and respond with whether it meets the following criteria:
 * The role should be primarily ML engineering. Designing, implementing, training and/or finetuning
@@ -22,21 +24,21 @@ news hiring thread. Read the post and respond with whether it meets the followin
 Err toward including posts when it's ambiguous. Respond with either "MATCHES" or "DOES NOT MATCH".
 Include no other text in your response. Here's the job post:
 {post_json}
-""").strip()
+"""
+).strip()
+
 
 def process_post(client, post):
     post_json = json.dumps(post)
-    
+
     response = client.messages.create(
         model="claude-3-7-sonnet-20250219",
         max_tokens=2048,
         system="You are a helpful assistant.",
-        messages=[
-            {"role": "user", "content": prompt.format(post_json=post_json)}
-        ],
-        thinking={"type": "enabled", "budget_tokens": 1024}
+        messages=[{"role": "user", "content": prompt.format(post_json=post_json)}],
+        thinking={"type": "enabled", "budget_tokens": 1024},
     )
-    
+
     # Access the final answer (non-thinking content)
     print("Blocks:")
     for block in response.content:
@@ -45,27 +47,35 @@ def process_post(client, post):
     final_block = response.content[-1]
     assert final_block.type == "text"
     response = final_block.text
-    #print(f"Post {post['id']}: {response}")
-    return response
+    # print(f"Post {post['id']}: {response}")
+    return post, response
+
 
 def main():
     parser = argparse.ArgumentParser(description="Filter HN hiring posts using Claude")
-    parser.add_argument("jsonl_file", help="Path to the JSONL file containing HN job posts")
-    parser.add_argument("--output", "-o", help="Path to output file for matching posts", default="matching_posts.jsonl")
+    parser.add_argument(
+        "jsonl_file", help="Path to the JSONL file containing HN job posts"
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        help="Path to output file for matching posts",
+        default="matching_posts.jsonl",
+    )
     parser.add_argument(
         "--workers", "-w", type=int, default=4, help="Number of parallel workers"
     )
     args = parser.parse_args()
-    
+
     if not os.path.exists(args.jsonl_file):
         print(f"Error: File {args.jsonl_file} not found", file=sys.stderr)
         sys.exit(1)
-    
+
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         print("Error: ANTHROPIC_API_KEY environment variable not set", file=sys.stderr)
         sys.exit(1)
-        
+
     client = Anthropic(api_key=api_key)
     matches = 0
     processed = 0
@@ -121,6 +131,7 @@ def main():
 
     print(f"\nSummary: Found {matches} matching posts out of {processed} processed")
     print(f"Matching posts saved to {args.output}")
+
 
 if __name__ == "__main__":
     main()
