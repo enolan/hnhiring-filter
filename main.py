@@ -90,7 +90,7 @@ def main():
         default="matching_posts.jsonl",
     )
     parser.add_argument(
-        "--workers", "-w", type=int, default=4, help="Number of parallel workers"
+        "--workers", "-w", type=int, default=10, help="Number of parallel workers"
     )
     args = parser.parse_args()
 
